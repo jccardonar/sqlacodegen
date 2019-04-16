@@ -8,6 +8,7 @@ from collections import defaultdict
 from importlib import import_module
 from inspect import ArgSpec
 from keyword import iskeyword
+import logging
 
 import sqlalchemy
 import sqlalchemy.exc
@@ -17,6 +18,15 @@ from sqlalchemy import (
 from sqlalchemy.schema import ForeignKey
 from sqlalchemy.types import Boolean, String
 from sqlalchemy.util import OrderedDict
+
+# Set-up logging to stderr
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler(sys.stderr)
+handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 # The generic ARRAY type was introduced in SQLAlchemy 1.1
 try:
@@ -383,7 +393,12 @@ class CodeGenerator(object):
                 # Detect check constraints for boolean and enum columns
                 for constraint in table.constraints.copy():
                     if isinstance(constraint, CheckConstraint):
-                        sqltext = self._get_compiled_expression(constraint.sqltext)
+                        #sqltext = self._get_compiled_expression(constraint.sqltext)
+                        try:
+                            sqltext = self._get_compiled_expression(constraint.sqltext)
+                        except Exception as e:
+                            logger.error("Error compiling contraint {}. Ignoring".format(e))
+                            continue
 
                         # Turn any integer-like column with a CheckConstraint like
                         # "column IN (0, 1)" into a Boolean
@@ -626,7 +641,13 @@ class CodeGenerator(object):
             if (isinstance(constraint, (ForeignKeyConstraint, UniqueConstraint)) and
                     len(constraint.columns) == 1):
                 continue
-            table_args.append(self.render_constraint(constraint))
+            #table_args.append(self.render_constraint(constraint))
+            try:
+                rendered_constraint = self.render_constraint(constraint)
+            except Exception as e:
+                logger.error("Failed rendering contraint {}. Ignoring".format(e))
+                continue
+            table_args.append(rendered_constraint)
         for index in model.table.indexes:
             if len(index.columns) > 1:
                 table_args.append(self.render_index(index))

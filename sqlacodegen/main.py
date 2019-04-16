@@ -11,6 +11,7 @@ from sqlalchemy.schema import MetaData
 from sqlacodegen.codegen import CodeGenerator
 
 
+
 def main():
     parser = argparse.ArgumentParser(
         description='Generates SQLAlchemy model code from an existing database.')
