@@ -4,7 +4,7 @@ from __future__ import unicode_literals, division, print_function, absolute_impo
 import inspect
 import re
 import sys
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from importlib import import_module
 from inspect import ArgSpec
 from keyword import iskeyword
@@ -18,6 +18,8 @@ from sqlalchemy import (
 from sqlalchemy.schema import ForeignKey
 from sqlalchemy.types import Boolean, String
 from sqlalchemy.util import OrderedDict
+
+
 
 # Set-up logging to stderr
 logger = logging.getLogger()
@@ -176,7 +178,7 @@ class ModelTable(Model):
 class ModelClass(Model):
     parent_name = 'Base'
 
-    def __init__(self, table, association_tables, inflect_engine, detect_joined):
+    def __init__(self, table, association_tables, inflect_engine, detect_joined, tables_with_backrefs):
         super(ModelClass, self).__init__(table)
         self.name = self._tablename_to_classname(table.name, inflect_engine)
         self.children = []
@@ -197,7 +199,7 @@ class ModelClass(Model):
                     self.parent_name = target_cls
                 else:
                     relationship_ = ManyToOneRelationship(self.name, target_cls, constraint,
-                                                          inflect_engine)
+                                                          inflect_engine, tables_with_backrefs)
                     self._add_attribute(relationship_.preferred_name, relationship_)
 
         # Add many-to-many relationships
@@ -242,9 +244,15 @@ class ModelClass(Model):
         if any(isinstance(value, Relationship) for value in self.attributes.values()):
             collector.add_literal_import('sqlalchemy.orm', 'relationship')
 
+        # Add the backref object (does not matter if no userlist is used, at least for now)
+        if any(value.backref for value in self.attributes.values() if isinstance(value, Relationship)):
+            collector.add_literal_import('sqlalchemy.orm', 'backref')
+
+
         for child in self.children:
             child.add_imports(collector)
 
+BackRefDescription = namedtuple("BackRefDescription", "source destination name")
 
 class Relationship(object):
     def __init__(self, source_cls, target_cls):
@@ -252,10 +260,26 @@ class Relationship(object):
         self.source_cls = source_cls
         self.target_cls = target_cls
         self.kwargs = OrderedDict()
+        self.backref = False
+
+    # I'll leave the backref code here, but I'll need to see it working with a
+    # ManyToMany relationship
+    def add_backref(self, name_backref=None):
+        """
+        This must be called after kwargs has been fill to leverage the uselist value
+        """
+        if name_backref is None:
+            name_backref = self.source_cls
+        if self.kwargs.get("uselist", False):
+            backref_text = 'backref("{}", uselist=False)'.format(name_backref)
+        else:
+            backref_text = '"{}"'.format(name_backref)
+        self.kwargs["backref"] = backref_text
+        self.backref = True
 
 
 class ManyToOneRelationship(Relationship):
-    def __init__(self, source_cls, target_cls, constraint, inflect_engine):
+    def __init__(self, source_cls, target_cls, constraint, inflect_engine, tables_with_backrefs):
         super(ManyToOneRelationship, self).__init__(source_cls, target_cls)
 
         column_names = _get_column_names(constraint)
@@ -285,6 +309,9 @@ class ManyToOneRelationship(Relationship):
         if len(common_fk_constraints) > 1:
             self.kwargs['primaryjoin'] = "'{0}.{1} == {2}.{3}'".format(
                 source_cls, column_names[0], target_cls, constraint.elements[0].column.name)
+        if (source_cls, target_cls) in tables_with_backrefs:
+            self.add_backref(tables_with_backrefs[(source_cls, target_cls)].name) 
+
 
     @staticmethod
     def get_common_fk_constraints(table1, table2):
@@ -339,10 +366,16 @@ class CodeGenerator(object):
 {models}"""
 
     def __init__(self, metadata, noindexes=False, noconstraints=False, nojoined=False,
-                 noinflect=False, noclasses=False, indentation='    ', model_separator='\n\n',
+                 noinflect=False, noclasses=False, tables_with_backrefs=None, indentation='    ', model_separator='\n\n',
                  ignored_tables=('alembic_version', 'migrate_version'), table_model=ModelTable,
                  class_model=ModelClass,  template=None):
         super(CodeGenerator, self).__init__()
+
+        if  tables_with_backrefs is None:
+            self.tables_with_backrefs = {}
+        else:
+            self.tables_with_backrefs = tables_with_backrefs
+
         self.metadata = metadata
         self.noindexes = noindexes
         self.noconstraints = noconstraints
@@ -428,7 +461,7 @@ class CodeGenerator(object):
                 model = self.table_model(table)
             else:
                 model = self.class_model(table, links[table.name], self.inflect_engine,
-                                         not nojoined)
+                                         not nojoined, self.tables_with_backrefs)
                 classes[model.name] = model
 
             self.models.append(model)
@@ -446,6 +479,7 @@ class CodeGenerator(object):
             self.collector.add_literal_import('sqlalchemy', 'MetaData')
         else:
             self.collector.add_literal_import('sqlalchemy.ext.declarative', 'declarative_base')
+
 
     def create_inflect_engine(self):
         if self.noinflect:

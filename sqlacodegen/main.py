@@ -8,8 +8,28 @@ import pkg_resources
 from sqlalchemy.engine import create_engine
 from sqlalchemy.schema import MetaData
 
-from sqlacodegen.codegen import CodeGenerator
+from sqlacodegen.codegen import CodeGenerator, BackRefDescription
 
+import pathlib
+import csv
+
+def load_backref_csv(file_path):
+    """
+    Gets a back relationship dict from a csv file.
+    """
+    if not file_path.exists():
+        raise Exception("File {} does not exist".format(file_path))
+    backref_relationships = {}
+    with open(file_path, 'r') as fh:
+        csv_reader = csv.reader(fh)
+        for line in csv_reader:
+            if not line:
+                continue
+            sc = line[0]
+            tc = line[1]
+            name = line[2]
+            backref_relationships[(sc, tc)] = BackRefDescription(sc, tc, name)
+    return backref_relationships
 
 
 def main():
@@ -29,6 +49,7 @@ def main():
     parser.add_argument('--noclasses', action='store_true',
                         help="don't generate classes, only tables")
     parser.add_argument('--outfile', help='file to write output to (default: stdout)')
+    parser.add_argument('--table_backref_file', help='CSV file with source table, target table, and back relationship name')
     args = parser.parse_args()
 
     if args.version:
@@ -46,8 +67,14 @@ def main():
     tables = args.tables.split(',') if args.tables else None
     metadata.reflect(engine, args.schema, not args.noviews, tables)
 
+    # take care of the backref hack
+    backrefs_tables = None
+    if args.table_backref_file:
+        backref_file = pathlib.Path(args.table_backref_file)
+        backrefs_tables = load_backref_csv(backref_file)
+
     # Write the generated model code to the specified file or standard output
     outfile = io.open(args.outfile, 'w', encoding='utf-8') if args.outfile else sys.stdout
     generator = CodeGenerator(metadata, args.noindexes, args.noconstraints, args.nojoined,
-                              args.noinflect, args.noclasses)
+                              args.noinflect, args.noclasses, backrefs_tables)
     generator.render(outfile)
