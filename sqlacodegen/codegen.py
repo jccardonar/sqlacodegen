@@ -252,7 +252,7 @@ class ModelClass(Model):
         for child in self.children:
             child.add_imports(collector)
 
-BackRefDescription = namedtuple("BackRefDescription", "source destination name")
+BackRefDescription = namedtuple("BackRefDescription", "source destination name primaryjoin")
 
 class Relationship(object):
     def __init__(self, source_cls, target_cls):
@@ -310,7 +310,15 @@ class ManyToOneRelationship(Relationship):
             self.kwargs['primaryjoin'] = "'{0}.{1} == {2}.{3}'".format(
                 source_cls, column_names[0], target_cls, constraint.elements[0].column.name)
         if (source_cls, target_cls) in tables_with_backrefs:
-            self.add_backref(tables_with_backrefs[(source_cls, target_cls)].name) 
+            # since there could be more thn one relation, we should compare on other parametrs, right now we just have primaryjoin
+            backref_description = tables_with_backrefs[(source_cls, target_cls)]
+            add_backref = True
+            if backref_description.primaryjoin:
+                add_backref = False
+                if "primaryjoin" in self.kwargs and self.kwargs["primaryjoin"].replace("'", "")  == backref_description.primaryjoin:
+                    add_backref = True
+            if add_backref:
+                self.add_backref(tables_with_backrefs[(source_cls, target_cls)].name) 
 
 
     @staticmethod

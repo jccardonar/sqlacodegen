@@ -28,7 +28,12 @@ def load_backref_csv(file_path):
             sc = line[0]
             tc = line[1]
             name = line[2]
-            backref_relationships[(sc, tc)] = BackRefDescription(sc, tc, name)
+            if len(line) >= 4:
+                pj = line[3]
+            else:
+                pj = None
+
+            backref_relationships[(sc, tc)] = BackRefDescription(sc, tc, name, pj)
     return backref_relationships
 
 
