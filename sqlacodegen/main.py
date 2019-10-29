@@ -7,6 +7,7 @@ import sys
 import pkg_resources
 from sqlalchemy.engine import create_engine
 from sqlalchemy.schema import MetaData
+from sqlalchemy.orm import sessionmaker
 
 from sqlacodegen.codegen import CodeGenerator, BackRefDescription
 
@@ -55,6 +56,11 @@ def main():
                         help="don't generate classes, only tables")
     parser.add_argument('--outfile', help='file to write output to (default: stdout)')
     parser.add_argument('--table_backref_file', help='CSV file with source table, target table, and back relationship name')
+    parser.add_argument(
+        "--add_version",
+        action='store_true',
+        help='Adds version to printed model as a constant. Version is found querying the "version" table. There is no current way of modifying this besides chanfing the script.',
+    )
     args = parser.parse_args()
 
     if args.version:
@@ -69,6 +75,7 @@ def main():
     # Use reflection to fill in the metadata
     engine = create_engine(args.url)
     metadata = MetaData(engine)
+    session = sessionmaker(bind=engine)()
     tables = args.tables.split(',') if args.tables else None
     metadata.reflect(engine, args.schema, not args.noviews, tables)
 
@@ -78,8 +85,13 @@ def main():
         backref_file = pathlib.Path(args.table_backref_file)
         backrefs_tables = load_backref_csv(backref_file)
 
+    # Check if we need to add the version
+    version = None
+    if args.add_version:
+        version = session.query(metadata.tables["version"]).all()[0][0]
+
     # Write the generated model code to the specified file or standard output
     outfile = io.open(args.outfile, 'w', encoding='utf-8') if args.outfile else sys.stdout
     generator = CodeGenerator(metadata, args.noindexes, args.noconstraints, args.nojoined,
-                              args.noinflect, args.noclasses, backrefs_tables)
+                              args.noinflect, args.noclasses, backrefs_tables, model_version=version)
     generator.render(outfile)

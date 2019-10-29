@@ -370,13 +370,15 @@ class CodeGenerator(object):
 
 {metadata_declarations}
 
+{constants}
+
 
 {models}"""
 
     def __init__(self, metadata, noindexes=False, noconstraints=False, nojoined=False,
                  noinflect=False, noclasses=False, tables_with_backrefs=None, indentation='    ', model_separator='\n\n',
                  ignored_tables=('alembic_version', 'migrate_version'), table_model=ModelTable,
-                 class_model=ModelClass,  template=None):
+                 class_model=ModelClass,  template=None, model_version=None):
         super(CodeGenerator, self).__init__()
 
         if  tables_with_backrefs is None:
@@ -398,6 +400,7 @@ class CodeGenerator(object):
         if template:
             self.template = template
         self.inflect_engine = self.create_inflect_engine()
+        self.model_version = model_version
 
         # Pick association tables from the metadata into their own set, don't process them normally
         links = defaultdict(lambda: [])
@@ -499,6 +502,12 @@ class CodeGenerator(object):
     def render_imports(self):
         return '\n'.join('from {0} import {1}'.format(package, ', '.join(sorted(names)))
                          for package, names in self.collector.items())
+
+    def render_version(self):
+        # only render if model is not None
+        if self.model_version:
+            return '__VERSION__ = ' + "'{}'".format(self.model_version)
+        return ''
 
     def render_metadata_declarations(self):
         if 'sqlalchemy.ext.declarative' in self.collector:
@@ -745,5 +754,6 @@ class CodeGenerator(object):
         output = self.template.format(
             imports=self.render_imports(),
             metadata_declarations=self.render_metadata_declarations(),
+            constants=self.render_version(),
             models=self.model_separator.join(rendered_models).rstrip('\n'))
         print(output, file=outfile)
