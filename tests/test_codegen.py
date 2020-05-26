@@ -1262,6 +1262,64 @@ class Simple(Base):
 """
 
 
+@pytest.mark.skipif(sqlalchemy.__version__ < '1.2', reason='Requires SQLAlchemy 1.2+')
+def test_column_comment(metadata):
+    Table(
+        'simple', metadata,
+        Column('id', INTEGER, primary_key=True, comment="this is a 'comment'")
+    )
+
+    assert generate_code(metadata) == """\
+# coding: utf-8
+from sqlalchemy import Column, Integer
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+metadata = Base.metadata
+
+
+class Simple(Base):
+    __tablename__ = 'simple'
+
+    id = Column(Integer, primary_key=True, comment="this is a 'comment'")
+"""
+
+
+@pytest.mark.skipif(sqlalchemy.__version__ < '1.2', reason='Requires SQLAlchemy 1.2+')
+def test_table_comment(metadata):
+    Table(
+        'simple', metadata,
+        Column('id', INTEGER, primary_key=True),
+        comment="this is a 'comment'"
+    )
+
+    codegen = CodeGenerator(metadata, noclasses=True)
+    code = codegen.render_table(codegen.models[0])
+    assert code == """\
+t_simple = Table(
+    'simple', metadata,
+    Column('id', Integer, primary_key=True),
+    comment='this is a \\'comment\\''
+)
+"""
+    code = generate_code(metadata)
+    assert code == """\
+# coding: utf-8
+from sqlalchemy import Column, Integer
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+metadata = Base.metadata
+
+
+class Simple(Base):
+    __tablename__ = 'simple'
+    __table_args__ = {'comment': "this is a 'comment'"}
+
+    id = Column(Integer, primary_key=True)
+"""
+
+
 @pytest.mark.parametrize('metadata', ['mysql'], indirect=['metadata'])
 def test_mysql_timestamp(metadata):
     Table(
@@ -1388,4 +1446,24 @@ class Simple(Base):
 
     id = Column(Integer, primary_key=True)
     my_longtext = Column(LONGTEXT)
+"""
+
+
+def test_table_name_identifiers(metadata):
+    Table(
+        'simple-items table', metadata,
+        Column('id', INTEGER, primary_key=True)
+    )
+
+    assert generate_code(metadata, noclasses=True) == """\
+# coding: utf-8
+from sqlalchemy import Column, Integer, MetaData, Table
+
+metadata = MetaData()
+
+
+t_simple_items_table = Table(
+    'simple-items table', metadata,
+    Column('id', Integer, primary_key=True)
+)
 """

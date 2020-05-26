@@ -54,6 +54,7 @@ def main():
                         help="don't try to convert tables names to singular form")
     parser.add_argument('--noclasses', action='store_true',
                         help="don't generate classes, only tables")
+    parser.add_argument('--nocomments', action='store_true', help="don't render column comments")
     parser.add_argument('--outfile', help='file to write output to (default: stdout)')
     parser.add_argument('--table_backref_file', help='CSV file with source table, target table, and back relationship name')
     parser.add_argument(
@@ -93,5 +94,5 @@ def main():
     # Write the generated model code to the specified file or standard output
     outfile = io.open(args.outfile, 'w', encoding='utf-8') if args.outfile else sys.stdout
     generator = CodeGenerator(metadata, args.noindexes, args.noconstraints, args.nojoined,
-                              args.noinflect, args.noclasses, backrefs_tables, model_version=version)
+                              args.noinflect, args.noclasses, backrefs_tables, model_version=version, nocomments=args.nocomments)
     generator.render(outfile)

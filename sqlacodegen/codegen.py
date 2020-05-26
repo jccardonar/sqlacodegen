@@ -16,6 +16,7 @@ from sqlalchemy import (
     Enum, ForeignKeyConstraint, PrimaryKeyConstraint, CheckConstraint, UniqueConstraint, Table,
     Column, Float)
 from sqlalchemy.schema import ForeignKey
+from sqlalchemy.sql.sqltypes import NullType
 from sqlalchemy.types import Boolean, String
 from sqlalchemy.util import OrderedDict
 
@@ -100,7 +101,8 @@ class Model(object):
 
         # Adapt column types to the most reasonable generic types (ie. VARCHAR -> String)
         for column in table.columns:
-            column.type = self._get_adapted_type(column.type, column.table.bind)
+            if not isinstance(column.type, NullType):
+                column.type = self._get_adapted_type(column.type, column.table.bind)
 
     def _get_adapted_type(self, coltype, bind):
         compiled_type = coltype.compile(bind.dialect)
@@ -168,8 +170,22 @@ class Model(object):
             if len(index.columns) > 1:
                 collector.add_import(index)
 
+    @staticmethod
+    def _convert_to_valid_identifier(name):
+        assert name, 'Identifier cannot be empty'
+        if name[0].isdigit() or iskeyword(name):
+            name = '_' + name
+        elif name == 'metadata':
+            name = 'metadata_'
+
+        return _re_invalid_identifier.sub('_', name)
+
 
 class ModelTable(Model):
+    def __init__(self, table):
+        super(ModelTable, self).__init__(table)
+        self.name = self._convert_to_valid_identifier(table.name)
+
     def add_imports(self, collector):
         super(ModelTable, self).add_imports(collector)
         collector.add_import(Table)
@@ -217,16 +233,6 @@ class ModelClass(Model):
         tablename = cls._convert_to_valid_identifier(tablename)
         camel_case_name = ''.join(part[:1].upper() + part[1:] for part in tablename.split('_'))
         return inflect_engine.singular_noun(camel_case_name) or camel_case_name
-
-    @staticmethod
-    def _convert_to_valid_identifier(name):
-        assert name, 'Identifier cannot be empty'
-        if name[0].isdigit() or iskeyword(name):
-            name = '_' + name
-        elif name == 'metadata':
-            name = 'metadata_'
-
-        return _re_invalid_identifier.sub('_', name)
 
     def _add_attribute(self, attrname, value):
         attrname = tempname = self._convert_to_valid_identifier(attrname)
@@ -378,7 +384,7 @@ class CodeGenerator(object):
     def __init__(self, metadata, noindexes=False, noconstraints=False, nojoined=False,
                  noinflect=False, noclasses=False, tables_with_backrefs=None, indentation='    ', model_separator='\n\n',
                  ignored_tables=('alembic_version', 'migrate_version'), table_model=ModelTable,
-                 class_model=ModelClass,  template=None, model_version=None):
+                 class_model=ModelClass,  template=None, model_version=None, nocomments=False):
         super(CodeGenerator, self).__init__()
 
         if  tables_with_backrefs is None:
@@ -397,9 +403,11 @@ class CodeGenerator(object):
         self.ignored_tables = ignored_tables
         self.table_model = table_model
         self.class_model = class_model
+        self.nocomments = nocomments
+        self.inflect_engine = self.create_inflect_engine()
         if template:
             self.template = template
-        self.inflect_engine = self.create_inflect_engine()
+
         self.model_version = model_version
 
         # Pick association tables from the metadata into their own set, don't process them normally
@@ -522,7 +530,10 @@ class CodeGenerator(object):
     @staticmethod
     def _getargspec_init(method):
         try:
-            return inspect.getargspec(method)
+            if hasattr(inspect, 'getfullargspec'):
+                return inspect.getfullargspec(method)
+            else:
+                return inspect.getargspec(method)
         except TypeError:
             if method is object.__init__:
                 return ArgSpec(['self'], None, None, None)
@@ -633,13 +644,15 @@ class CodeGenerator(object):
                 default_expr = default_expr.replace('"', '\\"')
                 server_default = 'server_default=text("{0}")'.format(default_expr)
 
+        comment = getattr(column, 'comment', None)
         return 'Column({0})'.format(', '.join(
             ([repr(column.name)] if show_name else []) +
             ([self.render_column_type(column.type)] if render_coltype else []) +
             [self.render_constraint(x) for x in dedicated_fks] +
             [repr(x) for x in column.constraints] +
             ['{0}={1}'.format(k, repr(getattr(column, k))) for k in kwarg] +
-            ([server_default] if server_default else [])
+            ([server_default] if server_default else []) +
+            (['comment={!r}'.format(comment)] if comment else [])
         ))
 
     def render_relationship(self, relationship):
@@ -657,8 +670,8 @@ class CodeGenerator(object):
         return rendered + delimiter.join(args) + end
 
     def render_table(self, model):
-        rendered = 't_{0} = Table(\n{1}{0!r}, metadata,\n'.format(
-            model.table.name, self.indentation)
+        rendered = 't_{0} = Table(\n{2}{1!r}, metadata,\n'.format(
+            model.name, model.table.name, self.indentation)
 
         for column in model.table.columns:
             rendered += '{0}{1},\n'.format(self.indentation, self.render_column(column, True))
@@ -677,6 +690,11 @@ class CodeGenerator(object):
 
         if model.schema:
             rendered += "{0}schema='{1}',\n".format(self.indentation, model.schema)
+
+        table_comment = getattr(model.table, 'comment', None)
+        if table_comment:
+            quoted_comment = table_comment.replace("'", "\\'").replace('"', '\\"')
+            rendered += "{0}comment='{1}',\n".format(self.indentation, quoted_comment)
 
         return rendered.rstrip('\n,') + '\n)\n'
 
@@ -706,6 +724,10 @@ class CodeGenerator(object):
         table_kwargs = {}
         if model.schema:
             table_kwargs['schema'] = model.schema
+
+        table_comment = getattr(model.table, 'comment', None)
+        if table_comment:
+            table_kwargs['comment'] = table_comment
 
         kwargs_items = ', '.join('{0!r}: {1!r}'.format(key, table_kwargs[key])
                                  for key in table_kwargs)
