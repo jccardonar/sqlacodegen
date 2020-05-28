@@ -20,6 +20,7 @@ from sqlalchemy.sql.sqltypes import NullType
 from sqlalchemy.types import Boolean, String
 from sqlalchemy.util import OrderedDict
 
+import textwrap
 
 
 # Set-up logging to stderr
@@ -384,13 +385,23 @@ class CodeGenerator(object):
     def __init__(self, metadata, noindexes=False, noconstraints=False, nojoined=False,
                  noinflect=False, noclasses=False, tables_with_backrefs=None, indentation='    ', model_separator='\n\n',
                  ignored_tables=('alembic_version', 'migrate_version'), table_model=ModelTable,
-                 class_model=ModelClass,  template=None, model_version=None, nocomments=False):
+                 class_model=ModelClass,  template=None, model_version=None, nocomments=False, mixin_table=None, patch_table=None):
         super(CodeGenerator, self).__init__()
 
         if  tables_with_backrefs is None:
             self.tables_with_backrefs = {}
         else:
             self.tables_with_backrefs = tables_with_backrefs
+
+        if mixin_table is None:
+            self.mixin_table = {}
+        else:
+            self.mixin_table = mixin_table
+
+        if patch_table is None:
+            self.patch_table = {}
+        else:
+            self.patch_table = patch_table
 
         self.metadata = metadata
         self.noindexes = noindexes
@@ -507,9 +518,25 @@ class CodeGenerator(object):
             import inflect
             return inflect.engine()
 
+    def render_import_mixin_modules(self):
+        # find the classes per module.
+        classes_per_module = {}
+        for module, class_name in self.mixin_table.values():
+            classes_per_module.setdefault(module, set()).add(class_name)
+        text_per_module = ["# Mixin imports"]
+        for module in classes_per_module:
+            text = f"from {module} import {', '.join(classes_per_module[module])}"
+            text_per_module.append(text)
+        return '\n'.join(text_per_module)
+
     def render_imports(self):
-        return '\n'.join('from {0} import {1}'.format(package, ', '.join(sorted(names)))
+        imports =  '\n'.join('from {0} import {1}'.format(package, ', '.join(sorted(names)))
                          for package, names in self.collector.items())
+        mixin_imports = self.render_import_mixin_modules()
+        if mixin_imports:
+            imports = '\n'.join([imports, mixin_imports])
+        return imports
+        
 
     def render_version(self):
         # only render if model is not None
@@ -699,7 +726,11 @@ class CodeGenerator(object):
         return rendered.rstrip('\n,') + '\n)\n'
 
     def render_class(self, model):
-        rendered = 'class {0}({1}):\n'.format(model.name, model.parent_name)
+        if model.table.name not in self.mixin_table:
+            rendered = 'class {0}({1}):\n'.format(model.name, model.parent_name)
+        else:
+            rendered = 'class {0}({1}, {2}):\n'.format(model.name, model.parent_name, self.mixin_table[model.table.name][1])
+
         rendered += '{0}__tablename__ = {1!r}\n'.format(self.indentation, model.table.name)
 
         # Render constraints and indexes as __table_args__
@@ -758,6 +789,12 @@ class CodeGenerator(object):
             if isinstance(relationship, Relationship):
                 rendered += '{0}{1} = {2}\n'.format(
                     self.indentation, attr, self.render_relationship(relationship))
+
+        # render patches
+        if model.table.name in self.patch_table:
+            rendered += f"{self.indentation}# Adding patch\n"
+            for patch in self.patch_table[model.table.name]:
+                rendered +=  textwrap.indent(self.patch_table[model.table.name], len(self.indentation)) + "\n"
 
         # Render subclasses
         for child_class in model.children:

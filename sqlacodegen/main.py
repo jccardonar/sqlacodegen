@@ -37,6 +37,44 @@ def load_backref_csv(file_path):
             backref_relationships[(sc, tc)] = BackRefDescription(sc, tc, name, pj)
     return backref_relationships
 
+def load_mixins_csv(file_path):
+    '''
+    Gets back the mixin for the table classes
+    '''
+    if not file_path.exists():
+        raise Exception("File {} does not exist".format(file_path))
+    mixins_for_table = {}
+    with open(file_path, 'r') as fh:
+        csv_reader = csv.reader(fh)
+        for line in csv_reader:
+            if not line:
+                continue
+            table_name = line[0]
+            if table_name in mixins_for_table:
+                raise Exception(f"Only one mixin per table allowed, got more for {table_name}")
+            module_name = line[1]
+            class_name = line[2]
+            mixins_for_table[table_name] = (module_name, class_name)
+    return mixins_for_table
+
+def load_patches_csv(file_path):
+    if not file_path.exists():
+        raise Exception("File {} does not exist".format(file_path))
+    patches_per_table = {}
+    with open(file_path, 'r') as fh:
+        csv_reader = csv.reader(fh)
+        for linen, line in enumerate(csv_reader):
+            if not line:
+                continue
+            table = line[0]
+            patch_file = pathlib.Path(line[1])
+            if not patch_file.exists():
+                raise Exception(f"File {patch_file} in line {n} does not exist")
+            with open(patch_file, 'f') as pfh:
+                patch = pfh.read()
+            patches_per_table.setdefault(table, []).append(patch)
+    return patches_per_table
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -62,6 +100,8 @@ def main():
         action='store_true',
         help='Adds version to printed model as a constant. Version is found querying the "version" table. There is no current way of modifying this besides chanfing the script.',
     )
+    parser.add_argument("--table_mixins", help="CSV file with the mixins that a table class should have. File should have table,module,class_name")
+    parser.add_argument("--table_patches", help="CSV file with patch files per table.")
     args = parser.parse_args()
 
     if args.version:
@@ -86,6 +126,17 @@ def main():
         backref_file = pathlib.Path(args.table_backref_file)
         backrefs_tables = load_backref_csv(backref_file)
 
+    mixin_tables = None
+    if args.table_mixins:
+        mixin_file = pathlib.Path(args.table_mixins)
+        mixin_tables = load_mixins_csv(mixin_file)
+
+    patch_table = None
+    if args.table_patches:
+        table_patches_file = pathlib.Path(args.table_patches)
+        path_table = load_patches_csv(table_patches_file)
+
+
     # Check if we need to add the version
     version = None
     if args.add_version:
@@ -94,5 +145,6 @@ def main():
     # Write the generated model code to the specified file or standard output
     outfile = io.open(args.outfile, 'w', encoding='utf-8') if args.outfile else sys.stdout
     generator = CodeGenerator(metadata, args.noindexes, args.noconstraints, args.nojoined,
-                              args.noinflect, args.noclasses, backrefs_tables, model_version=version, nocomments=args.nocomments)
+                              args.noinflect, args.noclasses, backrefs_tables, model_version=version, nocomments=args.nocomments,
+                              mixin_table=mixin_tables, patch_table=patch_table)
     generator.render(outfile)
