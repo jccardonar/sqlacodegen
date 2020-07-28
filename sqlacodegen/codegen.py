@@ -209,7 +209,7 @@ class ModelClass(Model):
             fk_constraints.sort(key=_get_constraint_sort_key)
             target_cls = self._tablename_to_classname(
                 fk_constraints[1].elements[0].column.table.name, inflect_engine)
-            relationship_ = ManyToManyRelationship(self.name, target_cls, association_table)
+            relationship_ = ManyToManyRelationship(self, target_cls, association_table)
             self._add_attribute(relationship_.preferred_name, relationship_)
 
     @classmethod
@@ -332,7 +332,9 @@ class ManyToOneRelationship(Relationship):
 
 
 class ManyToManyRelationship(Relationship):
-    def __init__(self, source_cls, target_cls, assocation_table):
+    def __init__(self, source_cls_obj, target_cls, assocation_table):
+        source_cls = source_cls_obj.name
+        source_table_name = source_cls_obj.table.name
         super(ManyToManyRelationship, self).__init__(source_cls, target_cls)
 
         prefix = (assocation_table.schema + '.') if assocation_table.schema else ''
@@ -343,6 +345,32 @@ class ManyToManyRelationship(Relationship):
         colname = _get_column_names(constraints[1])[0]
         tablename = constraints[1].elements[0].column.table.name
         self.preferred_name = tablename if not colname.endswith('_id') else colname[:-3] + 's'
+
+        # We check whether the key from the association table to the source cls is unique, if so we 
+        # use a single element. (use_list=False)
+        # find foreign constraint from assocation_table to source_cls, find the columns. Not sure how to do this better
+
+        foreign_keys_ass_to_source = [] 
+        for at_c in assocation_table.constraints:
+            if isinstance(at_c, ForeignKeyConstraint):
+                external_column =  at_c.elements[0].column.table.name
+                if external_column == source_table_name:
+                    if len(at_c.columns) == 1:
+                        column = next(iter(at_c.columns))
+                        foreign_keys_ass_to_source.append(column.name)
+
+        unique_columns_in_association_table = []
+        # find constraints in assocation_table that should be unique
+        for at_c in assocation_table.constraints:
+            if isinstance(at_c, (PrimaryKeyConstraint, UniqueConstraint)):
+                if len(at_c.columns) == 1:
+                    column = next(iter(at_c.columns))
+                    unique_columns_in_association_table.append(column.name)
+
+        if len(foreign_keys_ass_to_source) == 1 and foreign_keys_ass_to_source[0] in unique_columns_in_association_table:
+            self.kwargs['uselist'] = 'False'
+            self.preferred_name = tablename if not colname.endswith('_id') else colname[:-3]
+         
 
         # Handle self referential relationships
         if source_cls == target_cls:
