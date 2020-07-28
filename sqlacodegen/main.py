@@ -98,7 +98,7 @@ def main():
     parser.add_argument(
         "--add_version",
         action='store_true',
-        help='Adds version to printed model as a constant. Version is found querying the "version" table. There is no current way of modifying this besides chanfing the script.',
+        help='Adds version to printed model as a constant. Version is found querying the "version" table. There is no current way of modifying this besides changing the script.',
     )
     parser.add_argument("--table_mixins", help="CSV file with the mixins that a table class should have. File should have table,module,class_name")
     parser.add_argument("--table_patches", help="CSV file with patch files per table.")
@@ -134,7 +134,7 @@ def main():
     patch_table = None
     if args.table_patches:
         table_patches_file = pathlib.Path(args.table_patches)
-        path_table = load_patches_csv(table_patches_file)
+        patch_table = load_patches_csv(table_patches_file)
 
 
     # Check if we need to add the version
