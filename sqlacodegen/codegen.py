@@ -271,9 +271,9 @@ class Relationship(object):
         if name_backref is None:
             name_backref = self.source_cls
         if self.kwargs.get("uselist", False):
-            backref_text = 'backref("{}", uselist=False)'.format(name_backref)
+            backref_text = 'backref("{}", uselist=False, passive_deletes=True)'.format(name_backref)
         else:
-            backref_text = '"{}"'.format(name_backref)
+            backref_text = 'backref("{}", passive_deletes=True)'.format(name_backref)
         self.kwargs["backref"] = backref_text
         self.backref = True
 
